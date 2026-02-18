@@ -1,0 +1,348 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Fluorescent Rainbow Snake</title>
+  <style>
+    :root {
+      --bg: #050510;
+      --panel: #12122a;
+      --text: #f2f2ff;
+      --glow: 0 0 12px;
+      font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100dvh;
+      display: flex;
+      justify-content: center;
+      background: radial-gradient(circle at top, #111132 0%, #050510 55%);
+      color: var(--text);
+      touch-action: none;
+    }
+
+    .app {
+      width: min(96vw, 560px);
+      padding: 16px 14px 22px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      align-items: center;
+    }
+
+    .scoreboard {
+      width: 100%;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    .card {
+      background: rgba(18, 18, 42, 0.95);
+      border: 1px solid #2d2d57;
+      border-radius: 12px;
+      padding: 10px;
+      text-align: center;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+    }
+
+    .card span {
+      display: block;
+      margin-top: 6px;
+      font-size: 1.5rem;
+    }
+
+    canvas {
+      width: 100%;
+      max-width: 560px;
+      aspect-ratio: 1 / 1;
+      border-radius: 16px;
+      border: 2px solid #2f2f66;
+      background: #08081a;
+      box-shadow: 0 0 28px rgba(65, 65, 255, 0.2);
+    }
+
+    .hint {
+      margin: 0;
+      color: #c7c7f2;
+      text-align: center;
+      font-size: 0.95rem;
+    }
+
+    .controls {
+      width: 100%;
+      max-width: 320px;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      grid-template-rows: repeat(2, 56px);
+      gap: 8px;
+      user-select: none;
+    }
+
+    .controls button {
+      border: none;
+      border-radius: 10px;
+      font-size: 1.25rem;
+      font-weight: 800;
+      color: #f9f9ff;
+      background: #252557;
+      box-shadow: inset 0 0 0 1px #434393;
+    }
+
+    .controls button:active {
+      transform: translateY(1px);
+      filter: brightness(1.2);
+    }
+
+    .up { grid-column: 2; grid-row: 1; }
+    .left { grid-column: 1; grid-row: 2; }
+    .down { grid-column: 2; grid-row: 2; }
+    .right { grid-column: 3; grid-row: 2; }
+
+    @media (min-width: 768px) {
+      .controls { max-width: 260px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <section class="scoreboard">
+      <div class="card">Score<span id="score">0</span></div>
+      <div class="card">High Score<span id="highScore">0</span></div>
+    </section>
+
+    <canvas id="game" width="600" height="600" aria-label="Snake Game"></canvas>
+
+    <p class="hint">PC: Arrow Keys / WASD • Phone: Swipe or tap controls</p>
+
+    <section class="controls" aria-label="Touch controls">
+      <button class="up" data-dir="up" aria-label="Up">▲</button>
+      <button class="left" data-dir="left" aria-label="Left">◀</button>
+      <button class="down" data-dir="down" aria-label="Down">▼</button>
+      <button class="right" data-dir="right" aria-label="Right">▶</button>
+    </section>
+  </main>
+
+  <script>
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d');
+    const scoreEl = document.getElementById('score');
+    const highScoreEl = document.getElementById('highScore');
+    const gridSize = 20;
+    const tileCount = 20;
+    const STORAGE_KEY = 'fluorescent-snake-high-score';
+
+    const fluorescentColors = [
+      '#39FF14',
+      '#00F5FF',
+      '#FF00FF',
+      '#FFFF00',
+      '#FF5F1F',
+      '#7DFF00',
+      '#00B3FF'
+    ];
+
+    let snake;
+    let direction;
+    let queuedDirection;
+    let food;
+    let score;
+    let highScore;
+    let snakeColorIndex;
+    let gameOver;
+    let tickMs;
+
+    function init() {
+      highScore = Number(localStorage.getItem(STORAGE_KEY) || 0);
+      highScoreEl.textContent = String(highScore);
+      resetGame();
+      bindControls();
+      gameLoop();
+    }
+
+    function resetGame() {
+      snake = [{ x: 10, y: 10 }];
+      direction = { x: 1, y: 0 };
+      queuedDirection = { ...direction };
+      snakeColorIndex = 0;
+      score = 0;
+      tickMs = 120;
+      gameOver = false;
+      food = randomFood();
+      scoreEl.textContent = '0';
+      draw();
+    }
+
+    function randomFood() {
+      let candidate;
+      do {
+        candidate = {
+          x: Math.floor(Math.random() * tileCount),
+          y: Math.floor(Math.random() * tileCount),
+          colorIndex: snakeColorIndex
+        };
+      } while (snake.some((part) => part.x === candidate.x && part.y === candidate.y));
+      return candidate;
+    }
+
+    function setDirection(next) {
+      if (next.x === -direction.x && next.y === -direction.y) return;
+      queuedDirection = next;
+    }
+
+    function bindControls() {
+      document.addEventListener('keydown', (event) => {
+        const key = event.key.toLowerCase();
+        if (key === 'arrowup' || key === 'w') setDirection({ x: 0, y: -1 });
+        if (key === 'arrowdown' || key === 's') setDirection({ x: 0, y: 1 });
+        if (key === 'arrowleft' || key === 'a') setDirection({ x: -1, y: 0 });
+        if (key === 'arrowright' || key === 'd') setDirection({ x: 1, y: 0 });
+        if (key === ' ' && gameOver) resetGame();
+      });
+
+      document.querySelectorAll('.controls button').forEach((button) => {
+        button.addEventListener('click', () => {
+          const dir = button.dataset.dir;
+          if (dir === 'up') setDirection({ x: 0, y: -1 });
+          if (dir === 'down') setDirection({ x: 0, y: 1 });
+          if (dir === 'left') setDirection({ x: -1, y: 0 });
+          if (dir === 'right') setDirection({ x: 1, y: 0 });
+        });
+      });
+
+      let startX = 0;
+      let startY = 0;
+
+      canvas.addEventListener('touchstart', (event) => {
+        const touch = event.touches[0];
+        startX = touch.clientX;
+        startY = touch.clientY;
+      }, { passive: true });
+
+      canvas.addEventListener('touchend', (event) => {
+        if (gameOver) {
+          resetGame();
+          return;
+        }
+
+        const touch = event.changedTouches[0];
+        const dx = touch.clientX - startX;
+        const dy = touch.clientY - startY;
+        const absX = Math.abs(dx);
+        const absY = Math.abs(dy);
+        const threshold = 16;
+
+        if (Math.max(absX, absY) < threshold) return;
+        if (absX > absY) {
+          setDirection(dx > 0 ? { x: 1, y: 0 } : { x: -1, y: 0 });
+        } else {
+          setDirection(dy > 0 ? { x: 0, y: 1 } : { x: 0, y: -1 });
+        }
+      }, { passive: true });
+    }
+
+    function update() {
+      if (gameOver) return;
+      direction = queuedDirection;
+      const head = {
+        x: snake[0].x + direction.x,
+        y: snake[0].y + direction.y
+      };
+
+      if (
+        head.x < 0 ||
+        head.y < 0 ||
+        head.x >= tileCount ||
+        head.y >= tileCount ||
+        snake.some((part) => part.x === head.x && part.y === head.y)
+      ) {
+        gameOver = true;
+        return;
+      }
+
+      snake.unshift(head);
+
+      if (head.x === food.x && head.y === food.y) {
+        score += 1;
+        scoreEl.textContent = String(score);
+        snakeColorIndex = (food.colorIndex + 1) % fluorescentColors.length;
+        food = randomFood();
+
+        if (score > highScore) {
+          highScore = score;
+          highScoreEl.textContent = String(highScore);
+          localStorage.setItem(STORAGE_KEY, String(highScore));
+        }
+
+        tickMs = Math.max(70, tickMs - 1.5);
+      } else {
+        snake.pop();
+      }
+    }
+
+    function drawRect(x, y, color, glow = color) {
+      const px = x * gridSize;
+      const py = y * gridSize;
+      ctx.shadowColor = glow;
+      ctx.shadowBlur = 10;
+      ctx.fillStyle = color;
+      ctx.fillRect(px + 1, py + 1, gridSize - 2, gridSize - 2);
+      ctx.shadowBlur = 0;
+    }
+
+    function drawGrid() {
+      ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+      ctx.lineWidth = 1;
+      for (let i = 1; i < tileCount; i += 1) {
+        const p = i * gridSize;
+        ctx.beginPath();
+        ctx.moveTo(p, 0);
+        ctx.lineTo(p, canvas.height);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(0, p);
+        ctx.lineTo(canvas.width, p);
+        ctx.stroke();
+      }
+    }
+
+    function draw() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = '#070715';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      drawGrid();
+
+      const snakeColor = fluorescentColors[snakeColorIndex];
+      snake.forEach((part) => drawRect(part.x, part.y, snakeColor));
+
+      const foodColor = fluorescentColors[food.colorIndex];
+      drawRect(food.x, food.y, foodColor, '#ffffff');
+
+      if (gameOver) {
+        ctx.fillStyle = 'rgba(0,0,0,0.45)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = '#ffffff';
+        ctx.textAlign = 'center';
+        ctx.font = 'bold 44px sans-serif';
+        ctx.fillText('Game Over', canvas.width / 2, canvas.height / 2 - 8);
+        ctx.font = '20px sans-serif';
+        ctx.fillText('Press Space or Swipe to restart', canvas.width / 2, canvas.height / 2 + 34);
+      }
+    }
+
+    function gameLoop() {
+      update();
+      draw();
+      setTimeout(gameLoop, tickMs);
+    }
+
+    init();
+  </script>
+</body>
+</html>
